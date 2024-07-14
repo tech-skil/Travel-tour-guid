@@ -1,10 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { FaPlane, FaPaperPlane, FaVolumeUp, FaVolumeMute, FaWifi, FaSpinner } from 'react-icons/fa';
+import { FaPlane, FaPaperPlane, FaVolumeUp, FaVolumeMute, FaWifi, FaTrash, FaMicrophone } from 'react-icons/fa';
 import { initializeChat, sendMessage } from './GeminiService';
 import scrollLoading from '../assets/img/scrollLoding.gif';
 
 const formatResponse = (text) => {
-  const sections = text.split('**').filter(s => s.trim());
+  const sections = text.split('**').filter(s => s.trim()) || text.split('##').filter(s => s.trim());
   let formattedText = '';
   
   sections.forEach((section, index) => {
@@ -23,12 +23,16 @@ const formatResponse = (text) => {
 };
 
 const ChatInterface = () => {
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState(() => {
+    const savedMessages = localStorage.getItem('chatMessages');
+    return savedMessages ? JSON.parse(savedMessages) : [];
+  });
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const messagesEndRef = useRef(null);
-  const [speakingMessageId, setSpeakingMessageId] = useState(null);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isListening, setIsListening] = useState(false);
 
   useEffect(() => {
     initializeChat();
@@ -42,9 +46,13 @@ const ChatInterface = () => {
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
-      window.speechSynthesis.cancel(); // Cancel any ongoing speech when unmounting
+      window.speechSynthesis.cancel();
     };
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem('chatMessages', JSON.stringify(messages));
+  }, [messages]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -55,6 +63,7 @@ const ChatInterface = () => {
   const handleSend = async () => {
     if (input.trim() && !isLoading && isOnline) {
       const userMessage = { 
+        id: Date.now(),
         text: input, 
         user: true, 
         timestamp: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
@@ -68,15 +77,18 @@ const ChatInterface = () => {
         const aiResponse = await sendMessage(input);
         const formattedResponse = formatResponse(aiResponse);
         const botMessage = {
+          id: Date.now(),
           text: formattedResponse,
           user: false,
           timestamp: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
           isFormatted: true
         };
         setMessages(prevMessages => [...prevMessages, botMessage]);
+        speakResponse(stripHtml(formattedResponse));
       } catch (error) {
         console.error("Error getting AI response:", error);
         const errorMessage = {
+          id: Date.now(),
           text: "Sorry, Please Check the internet connection and try again.",
           user: false,
           timestamp: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
@@ -96,23 +108,94 @@ const ChatInterface = () => {
     }
   };
 
-  const toggleSpeech = (messageId, text) => {
-    if (speakingMessageId === messageId) {
-      window.speechSynthesis.cancel();
-      setSpeakingMessageId(null);
+  const stopSpeech = () => {
+    window.speechSynthesis.cancel();
+    setIsSpeaking(false);
+  };
+
+  const speakResponse = (text) => {
+    stopSpeech(); // Stop any ongoing speech
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'en-IN';
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onstart = () => setIsSpeaking(true);
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const toggleSpeech = (text) => {
+    if (isSpeaking) {
+      stopSpeech();
     } else {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'en-IN'; // Set language to Indian English
-      utterance.onend = () => setSpeakingMessageId(null);
-      window.speechSynthesis.speak(utterance);
-      setSpeakingMessageId(messageId);
+      speakResponse(text);
+    }
+  };
+
+  const clearChat = () => {
+    setMessages([]);
+    setInput('');
+    localStorage.removeItem('chatMessages');
+    stopSpeech();
+  };
+
+  const stripHtml = (html) => {
+    const tmp = document.createElement('DIV');
+    tmp.innerHTML = html;
+    return tmp.textContent || tmp.innerText || '';
+  };
+
+  const toggleListening = () => {
+    if (!isListening) {
+      startListening();
+    } else {
+      stopListening();
+    }
+  };
+
+  const startListening = () => {
+    if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const recognition = new SpeechRecognition();
+      
+      recognition.lang = 'en-US';
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        setIsListening(true);
+      };
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        setInput(prevInput => prevInput + ' ' + transcript);
+      };
+
+      recognition.onerror = (event) => {
+        console.error('Speech recognition error', event.error);
+        setIsListening(false);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+      };
+
+      recognition.start();
+    } else {
+      console.error('Speech recognition not supported');
+    }
+  };
+
+  const stopListening = () => {
+    setIsListening(false);
+    if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const recognition = new SpeechRecognition();
+      recognition.stop();
     }
   };
 
   return (
     <div className="flex justify-center items-center min-h-screen bg-gray-100 p-4 ">
-      <div className="flex flex-col h-screen w-full md:h-[600px] md:w-[768px]  lg:w-[1024px] bg-white shadow-xl rounded-lg overflow-hidden">
+      <div className="flex flex-col h-screen w-full md:h-[600px] md:w-[768px]  lg:w-[1024px] bg-white shadow-xl rounded-lg overflow-hidden relative">
         {!isOnline && (
           <div className="bg-red-500 text-white p-2 text-center">
             <FaWifi className="inline mr-2" />
@@ -124,17 +207,16 @@ const ChatInterface = () => {
           <h1 className="text-xl font-semibold text-white">Travel and Tourism Guide</h1>
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {messages.map((message, index) => (
+          {messages.map((message) => (
             <MessageItem 
-              key={index} 
+              key={message.id} 
               message={message} 
               toggleSpeech={toggleSpeech}
-              isSpeaking={speakingMessageId === index}
+              isSpeaking={isSpeaking}
             />
           ))}
           {isLoading && (
             <div className="flex justify-start items-center">
-              {/* <FaSpinner className="animate-spin text-blue-500 text-2xl" /> */}
               <img src={scrollLoading} className='md:w-24' alt="Loading..." />
             </div>
           )}
@@ -142,6 +224,12 @@ const ChatInterface = () => {
         </div>
         <div className="bg-gray-50 border-t p-4">
           <div className="flex items-center bg-white rounded-full px-4 py-2 shadow-md">
+            <button 
+              onClick={toggleListening}
+              className={`mr-2 ${isListening ? 'text-red-500' : 'text-gray-500'} hover:text-blue-600`}
+            >
+              <FaMicrophone />
+            </button>
             <input
               type="text"
               value={input}
@@ -160,12 +248,24 @@ const ChatInterface = () => {
             </button>
           </div>
         </div>
+        <button 
+          onClick={clearChat}
+          className="absolute bottom-20 right-4 bg-red-500 text-white p-2 rounded-full hover:bg-red-600"
+          title="Clear Chat"
+        >
+          <FaTrash />
+        </button>
       </div>
     </div>
   );
 };
 
 const MessageItem = ({ message, toggleSpeech, isSpeaking }) => {
+  const handleSpeechToggle = () => {
+    if (message.user || message.isError) return;
+    toggleSpeech(message.isFormatted ? stripHtml(message.text) : message.text);
+  };
+
   const stripHtml = (html) => {
     const tmp = document.createElement('DIV');
     tmp.innerHTML = html;
@@ -188,7 +288,7 @@ const MessageItem = ({ message, toggleSpeech, isSpeaking }) => {
         </div>
         {!message.user && !message.isError && (
           <button 
-            onClick={() => toggleSpeech(message.id, stripHtml(message.text))}
+            onClick={handleSpeechToggle}
             className={`absolute bottom-2 right-2 ${isSpeaking ? 'text-blue-600' : 'text-gray-500'} hover:text-blue-600`}
           >
             {isSpeaking ? <FaVolumeMute /> : <FaVolumeUp />}
