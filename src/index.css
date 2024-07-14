@@ -1,3 +1,15 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* custom.css */
+@layer utilities {
+  .hidden-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .hidden-scrollbar {
+    -ms-overflow-style: none; /* Internet Explorer 10+ */
+    scrollbar-width: none; /* Firefox */
+  }
+}

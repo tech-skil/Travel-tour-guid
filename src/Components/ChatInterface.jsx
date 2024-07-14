@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { FaPlane, FaPaperPlane, FaVolumeUp, FaWifi, FaSpinner } from 'react-icons/fa';
+import { FaPlane, FaPaperPlane, FaVolumeUp, FaVolumeMute, FaWifi, FaSpinner } from 'react-icons/fa';
 import { initializeChat, sendMessage } from './GeminiService';
+import scrollLoading from '../assets/img/scrollLoding.gif';
 
 const formatResponse = (text) => {
   const sections = text.split('**').filter(s => s.trim());
@@ -11,7 +12,7 @@ const formatResponse = (text) => {
       formattedText += `<h3 class="text-xl font-semibold mb-2">${section.trim()}</h3>`;
     } else if (section.includes(':')) {
       const [header, content] = section.split(':');
-      formattedText += `<h3 class="text-lg font-semibold mt-3 mb-1">${header.trim()}:</h3>`;
+      formattedText += `<h4 class="text-lg font-semibold mt-3 mb-1">${header.trim()}:</h4>`;
       formattedText += `<p class="mb-2">${content.trim().replace(/\*/g, '')}</p>`;
     } else {
       formattedText += `<p class="mb-2">${section.trim().replace(/\*/g, '')}</p>`;
@@ -27,6 +28,7 @@ const ChatInterface = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const messagesEndRef = useRef(null);
+  const [speakingMessageId, setSpeakingMessageId] = useState(null);
 
   useEffect(() => {
     initializeChat();
@@ -40,6 +42,7 @@ const ChatInterface = () => {
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      window.speechSynthesis.cancel(); // Cancel any ongoing speech when unmounting
     };
   }, []);
 
@@ -74,7 +77,7 @@ const ChatInterface = () => {
       } catch (error) {
         console.error("Error getting AI response:", error);
         const errorMessage = {
-          text: "Sorry, I encountered an error. Please try again.",
+          text: "Sorry, Please Check the internet connection and try again.",
           user: false,
           timestamp: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
           isError: true
@@ -93,9 +96,23 @@ const ChatInterface = () => {
     }
   };
 
+  const toggleSpeech = (messageId, text) => {
+    if (speakingMessageId === messageId) {
+      window.speechSynthesis.cancel();
+      setSpeakingMessageId(null);
+    } else {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'en-IN'; // Set language to Indian English
+      utterance.onend = () => setSpeakingMessageId(null);
+      window.speechSynthesis.speak(utterance);
+      setSpeakingMessageId(messageId);
+    }
+  };
+
   return (
-    <div className="flex justify-center items-center min-h-screen bg-gray-100 p-4">
-      <div className="flex flex-col h-screen w-full md:h-[600px] md:w-[768px] lg:w-[1024px] bg-white shadow-xl rounded-lg overflow-hidden">
+    <div className="flex justify-center items-center min-h-screen bg-gray-100 p-4 ">
+      <div className="flex flex-col h-screen w-full md:h-[600px] md:w-[768px]  lg:w-[1024px] bg-white shadow-xl rounded-lg overflow-hidden">
         {!isOnline && (
           <div className="bg-red-500 text-white p-2 text-center">
             <FaWifi className="inline mr-2" />
@@ -108,11 +125,17 @@ const ChatInterface = () => {
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {messages.map((message, index) => (
-            <MessageItem key={index} message={message} />
+            <MessageItem 
+              key={index} 
+              message={message} 
+              toggleSpeech={toggleSpeech}
+              isSpeaking={speakingMessageId === index}
+            />
           ))}
           {isLoading && (
             <div className="flex justify-start items-center">
-              <FaSpinner className="animate-spin  text-blue-500 text-2xl" />
+              {/* <FaSpinner className="animate-spin text-blue-500 text-2xl" /> */}
+              <img src={scrollLoading} className='md:w-24' alt="Loading..." />
             </div>
           )}
           <div ref={messagesEndRef} />
@@ -142,27 +165,38 @@ const ChatInterface = () => {
   );
 };
 
-const MessageItem = ({ message }) => (
-  <div className={`flex ${message.user ? 'justify-end' : 'justify-start'}`}>
-    <div className={`max-w-[70%] px-4 py-2 rounded-lg ${
-      message.user ? 'bg-blue-100' : message.isError ? 'bg-red-100' : 'bg-gray-100'
-    } relative`}>
-      {message.isFormatted ? (
-        <div dangerouslySetInnerHTML={{ __html: message.text }} />
-      ) : (
-        <p className="text-sm">{message.text}</p>
-      )}
-      <div className="text-xs text-gray-500 mt-1 flex justify-between">
-        <span>{message.timestamp}</span>
-        {message.user && <span>{message.status}</span>}
+const MessageItem = ({ message, toggleSpeech, isSpeaking }) => {
+  const stripHtml = (html) => {
+    const tmp = document.createElement('DIV');
+    tmp.innerHTML = html;
+    return tmp.textContent || tmp.innerText || '';
+  };
+
+  return (
+    <div className={`flex ${message.user ? 'justify-end' : 'justify-start'}`}>
+      <div className={`max-w-[70%] px-4 py-2 rounded-lg ${
+        message.user ? 'bg-blue-100' : message.isError ? 'bg-red-100' : 'bg-gray-100'
+      } relative`}>
+        {message.isFormatted ? (
+          <div dangerouslySetInnerHTML={{ __html: message.text }} />
+        ) : (
+          <p className="text-sm">{message.text}</p>
+        )}
+        <div className="text-xs text-gray-500 mt-1 flex justify-between">
+          <span>{message.timestamp}</span>
+          {message.user && <span>{message.status}</span>}
+        </div>
+        {!message.user && !message.isError && (
+          <button 
+            onClick={() => toggleSpeech(message.id, stripHtml(message.text))}
+            className={`absolute bottom-2 right-2 ${isSpeaking ? 'text-blue-600' : 'text-gray-500'} hover:text-blue-600`}
+          >
+            {isSpeaking ? <FaVolumeMute /> : <FaVolumeUp />}
+          </button>
+        )}
       </div>
-      {!message.user && !message.isError && (
-        <button className="absolute bottom-2 right-2 text-gray-500 hover:text-blue-600">
-          <FaVolumeUp />
-        </button>
-      )}
     </div>
-  </div>
-);
+  );
+};
 
 export default ChatInterface;
